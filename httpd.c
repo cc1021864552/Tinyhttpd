@@ -52,84 +52,97 @@ void unimplemented(int);
  * return.  Process the request appropriately.
  * Parameters: the socket connected to the client */
 /**********************************************************************/
-void accept_request(void *arg)
-{
-    int client = (intptr_t)arg;
-    char buf[1024];
-    size_t numchars;
-    char method[255];
-    char url[255];
-    char path[512];
+void accept_request(void *arg){
+    int client = (intptr_t)arg;             // client 对应的socket
+    char buf[1024];                         // 缓冲数据区
+    size_t numchars;                        // 字符数
+    char method[255];                       // 请求方法
+    char url[255];                          // URL字段
+    char path[512];                 
     size_t i, j;
-    struct stat st;
-    int cgi = 0;      /* becomes true if server decides this is a CGI
-                       * program */
-    char *query_string = NULL;
+    struct stat st;                         // 请求文件的状态
+    int cgi = 0;                            // becomes true if server decides this is a CGI program.
+    char *query_string = NULL;              // 请求参数
 
+    // 读取http请求的第一行数据(request line),把请求反法存进 method 中.
+    // 请求行包含三个内容 method + request-URI + http-version
     numchars = get_line(client, buf, sizeof(buf));
-    i = 0; j = 0;
-    while (!ISspace(buf[i]) && (i < sizeof(method) - 1))
-    {
+    i = 0; 
+    j = 0;
+    while (!ISspace(buf[i]) && (i < sizeof(method) - 1)){
         method[i] = buf[i];
         i++;
     }
-    j=i;
+    j = i;
     method[i] = '\0';
-
-    if (strcasecmp(method, "GET") && strcasecmp(method, "POST"))
-    {
-        unimplemented(client);
+    
+    // 如果请求的方法不是 GET 或 POST 任意一个的话就直接发送 response 告诉客户端没实现该方法
+    if (strcasecmp(method, "GET") && strcasecmp(method, "POST")){
+        unimplemented(client);              
         return;
     }
-
-    if (strcasecmp(method, "POST") == 0)
+    
+    if (strcasecmp(method, "POST") == 0){
         cgi = 1;
+    }
 
     i = 0;
-    while (ISspace(buf[j]) && (j < numchars))
+    while (ISspace(buf[j]) && (j < numchars)){
         j++;
-    while (!ISspace(buf[j]) && (i < sizeof(url) - 1) && (j < numchars))
-    {
+    }
+    
+    // 获取url,包括请求参数
+    while (!ISspace(buf[j]) && (i < sizeof(url) - 1) && (j < numchars)){
         url[i] = buf[j];
         i++; j++;
     }
     url[i] = '\0';
 
-    if (strcasecmp(method, "GET") == 0)
-    {
+    if (strcasecmp(method, "GET") == 0){
+        // 如果请求方法是GET,则参数的传递方式是query_string.
+        // 当发起一次GET请求时,参数会以url string的形式进行传递.
+        // 即?后的字符串则为其请求参数,并以&作为分隔符.
         query_string = url;
-        while ((*query_string != '?') && (*query_string != '\0'))
+        while ((*query_string != '?') && (*query_string != '\0')){
             query_string++;
-        if (*query_string == '?')
-        {
+        }
+
+        if (*query_string == '?'){
             cgi = 1;
             *query_string = '\0';
             query_string++;
         }
     }
 
+    // 解析完请求行,打印出来
     sprintf(path, "htdocs%s", url);
+
+    // 查看请求的资源是否存在
     if (path[strlen(path) - 1] == '/')
         strcat(path, "index.html");
-    if (stat(path, &st) == -1) {
-        while ((numchars > 0) && strcmp("\n", buf))  /* read & discard headers */
+
+    // int stat(const char *file_name, struct stat *buf);
+    // 通过文件名filename获取文件信息,并保存在buf所指的结构体stat中。
+    // 执行成功则返回0，失败返回-1，错误代码存于errno.
+    if (stat(path, &st) == -1) {                                // 若文件状态不对
+        while ((numchars > 0) && strcmp("\n", buf))             // read & discard(丢弃) headers
             numchars = get_line(client, buf, sizeof(buf));
-        not_found(client);
+        
+        not_found(client);                                      // 没找到文件,直接返回
     }
-    else
-    {
+    else{                                                       // 根据文件状态执行相应的操作
         if ((st.st_mode & S_IFMT) == S_IFDIR)
             strcat(path, "/index.html");
-        if ((st.st_mode & S_IXUSR) ||
-                (st.st_mode & S_IXGRP) ||
-                (st.st_mode & S_IXOTH)    )
+        if ((st.st_mode & S_IXUSR) || (st.st_mode & S_IXGRP) || (st.st_mode & S_IXOTH))
             cgi = 1;
+
         if (!cgi)
-            serve_file(client, path);
+            serve_file(client, path);                           // call serve_file()
         else
-            execute_cgi(client, path, method, query_string);
+            execute_cgi(client, path, method, query_string);    // call execute_cgi()
     }
 
+    // close the client
     close(client);
 }
 
@@ -207,9 +220,7 @@ void error_die(const char *sc)
  * Parameters: client socket descriptor
  *             path to the CGI script */
 /**********************************************************************/
-void execute_cgi(int client, const char *path,
-        const char *method, const char *query_string)
-{
+void execute_cgi(int client, const char *path, const char *method, const char *query_string){
     char buf[1024];
     int cgi_output[2];
     int cgi_input[2];
@@ -253,10 +264,12 @@ void execute_cgi(int client, const char *path,
         return;
     }
 
-    if ( (pid = fork()) < 0 ) {
+    if ((pid = fork())< 0) {
         cannot_execute(client);
         return;
     }
+
+    
     sprintf(buf, "HTTP/1.0 200 OK\r\n");
     send(client, buf, strlen(buf), 0);
     if (pid == 0)  /* child: CGI script */
@@ -311,22 +324,17 @@ void execute_cgi(int client, const char *path,
  *             the size of the buffer
  * Returns: the number of bytes stored (excluding null) */
 /**********************************************************************/
-int get_line(int sock, char *buf, int size)
-{
+int get_line(int sock, char *buf, int size){
     int i = 0;
     char c = '\0';
     int n;
 
-    while ((i < size - 1) && (c != '\n'))
-    {
+    while ((i < size - 1) && (c != '\n')){
+        // ssize_t recv(int sockfd, void *buf, size_t len, int flags);
         n = recv(sock, &c, 1, 0);
-        /* DEBUG printf("%02X\n", c); */
-        if (n > 0)
-        {
-            if (c == '\r')
-            {
+        if (n > 0){
+            if (c == '\r'){
                 n = recv(sock, &c, 1, MSG_PEEK);
-                /* DEBUG printf("%02X\n", c); */
                 if ((n > 0) && (c == '\n'))
                     recv(sock, &c, 1, 0);
                 else
@@ -348,8 +356,8 @@ int get_line(int sock, char *buf, int size)
 /* Parameters: the socket to print the headers on
  *             the name of the file */
 /**********************************************************************/
-void headers(int client, const char *filename)
-{
+void headers(int client, const char *filename){
+
     char buf[1024];
     (void)filename;  /* could use filename to determine file type */
 
@@ -366,8 +374,8 @@ void headers(int client, const char *filename)
 /**********************************************************************/
 /* Give a client a 404 not found status message. */
 /**********************************************************************/
-void not_found(int client)
-{
+void not_found(int client){
+
     char buf[1024];
 
     sprintf(buf, "HTTP/1.0 404 NOT FOUND\r\n");
@@ -397,24 +405,28 @@ void not_found(int client)
  *              file descriptor
  *             the name of the file to serve */
 /**********************************************************************/
-void serve_file(int client, const char *filename)
-{
+void serve_file(int client, const char *filename){
+
     FILE *resource = NULL;
     int numchars = 1;
     char buf[1024];
 
     buf[0] = 'A'; buf[1] = '\0';
-    while ((numchars > 0) && strcmp("\n", buf))  /* read & discard headers */
+    while ((numchars > 0) && strcmp("\n", buf))         // read & discard headers
         numchars = get_line(client, buf, sizeof(buf));
 
+    // 文件操作
     resource = fopen(filename, "r");
-    if (resource == NULL)
-        not_found(client);
-    else
-    {
+    
+    if (resource == NULL){
+        not_found(client);                              // 未找到文件资源
+    }
+    else{
         headers(client, filename);
         cat(client, resource);
     }
+    
+    // 关闭文件
     fclose(resource);
 }
 
@@ -426,34 +438,60 @@ void serve_file(int client, const char *filename)
  * Parameters: pointer to variable containing the port to connect on
  * Returns: the socket */
 /**********************************************************************/
-int startup(u_short *port)
-{
+int startup(u_short *port){
     int httpd = 0;
     int on = 1;
     struct sockaddr_in name;
 
+    // int socket(int domain, int type, int protocol);
     httpd = socket(PF_INET, SOCK_STREAM, 0);
-    if (httpd == -1)
+    if (httpd == -1){
         error_die("socket");
+    }
+
     memset(&name, 0, sizeof(name));
     name.sin_family = AF_INET;
+
+    // uint16_t htons(uint16_t hostshort);
+    // The htons() function converts the unsigned short integer hostshort from host byte order to network byte order.
     name.sin_port = htons(*port);
+
+    // uint32_t htonl(uint32_t hostlong);
+    // The htonl() function converts the unsigned integer hostlong from host byte order to network byte order.
     name.sin_addr.s_addr = htonl(INADDR_ANY);
-    if ((setsockopt(httpd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on))) < 0)  
-    {  
+
+    // int setsockopt(int sockfd,               // 将要被设置或者获取选项的套接字
+    //                int level,                // 选项所在的协议层
+    //                int optname,              // 需要访问的选项名
+    //                const void *optval,       // 对于getsockopt()，指向返回选项值的缓冲。对于setsockopt()，指向包含新选项值的缓冲。
+    //                socklen_t optlen          // 对于getsockopt()，作为入口参数时，选项值的最大长度。作为出口参数时，选项值的实际长度。对于setsockopt()，现选项的长度             
+    //      );
+    // 获取或者设置与某个套接字关联的选项。
+    if ((setsockopt(httpd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on))) < 0){  
         error_die("setsockopt failed");
     }
-    if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0)
+
+    // int bind(int sockfd, const struct sockaddr *addr, socklen_t addrlen);
+    if (bind(httpd, (struct sockaddr *)&name, sizeof(name)) < 0){
         error_die("bind");
-    if (*port == 0)  /* if dynamically allocating a port */
-    {
+    }
+    if (*port == 0){                                 /* if dynamically allocating a port */
         socklen_t namelen = sizeof(name);
-        if (getsockname(httpd, (struct sockaddr *)&name, &namelen) == -1)
+        
+        // int getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *optlen);
+        // 类似于setsockopt()
+        if (getsockname(httpd, (struct sockaddr *)&name, &namelen) == -1){
             error_die("getsockname");
+        }
+
         *port = ntohs(name.sin_port);
     }
-    if (listen(httpd, 5) < 0)
+
+    // int listen(int sockfd, int backlog);
+    if (listen(httpd, 5) < 0){
         error_die("listen");
+    }
+    
     return(httpd);
 }
 
@@ -462,8 +500,8 @@ int startup(u_short *port)
  * implemented.
  * Parameter: the client socket */
 /**********************************************************************/
-void unimplemented(int client)
-{
+void unimplemented(int client){
+    
     char buf[1024];
 
     sprintf(buf, "HTTP/1.0 501 Method Not Implemented\r\n");
@@ -485,31 +523,39 @@ void unimplemented(int client)
 }
 
 /**********************************************************************/
-
-int main(void)
-{
+// 主函数
+int main(void){
     int server_sock = -1;
     u_short port = 4000;
     int client_sock = -1;
     struct sockaddr_in client_name;
-    socklen_t  client_name_len = sizeof(client_name);
+    socklen_t client_name_len = sizeof(client_name);
     pthread_t newthread;
 
+    // 调用用户封装的startup函数来初始化一个socket
     server_sock = startup(&port);
     printf("httpd running on port %d\n", port);
 
-    while (1)
-    {
-        client_sock = accept(server_sock,
-                (struct sockaddr *)&client_name,
-                &client_name_len);
-        if (client_sock == -1)
+    while(1){
+        // 判断是否接受到一个连接请求
+        // int accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+        // 程序员把类型、ip地址、端口填充sockaddr_in结构体，然后强制转换成sockaddr，作为参数传递给系统调用函数
+        client_sock = accept(server_sock, (struct sockaddr *) &client_name, &client_name_len);
+        if (client_sock == -1){
             error_die("accept");
+        }
+        
         /* accept_request(&client_sock); */
-        if (pthread_create(&newthread , NULL, (void *)accept_request, (void *)(intptr_t)client_sock) != 0)
+        // int pthread_create(pthread_t *restrict tidp, 
+        //                    const pthread_attr_t *restrict_attr,
+        //                    void*（*start_rtn)(void*),    线程运行函数的入口地址
+        //                    void *restrict arg);          线程运行函数的参数
+        if (pthread_create(&newthread , NULL, (void *)accept_request, (void *)(intptr_t)client_sock) != 0){
             perror("pthread_create");
+        }
     }
 
+    // close server socket
     close(server_sock);
 
     return(0);
